@@ -3,6 +3,13 @@
     <!-- 侧边栏遮罩层（移动端/展开时显示） -->
     <div v-if="sidebarVisible && isMobile" class="sidebar-mask" @click="closeSidebar"></div>
     
+    <!-- 新增：侧边栏触发器 -->
+    <div 
+      class="sidebar-trigger"
+      @mouseenter="handleSidebarEnter"
+      @mouseleave="handleSidebarLeave"
+    ></div>
+
     <!-- 悬浮式侧边栏 -->
     <div 
       class="left-menu"
@@ -259,27 +266,35 @@ const handleTouchEnd = () => {
   z-index: 1001;
 }
 
+.sidebar-trigger {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 15px; /* A small, invisible area to trigger the hover */
+  height: 100vh;
+  z-index: 1003;
+}
+
 .left-menu {
   position: fixed;
   top: 0;
   left: 0;
   height: 100vh;
-  width: 8px;
+  width: 280px; /* Fixed width */
   background: var(--color-bg-secondary);
   color: var(--color-text-primary);
   border-right: 1px solid var(--color-border-primary);
-  box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+  box-shadow: 2px 0 16px rgba(0,0,0,0.08);
   z-index: 1002;
   display: flex;
   flex-direction: column;
-  padding: 0;
-  transition: width 0.3s cubic-bezier(.4,0,.2,1), box-shadow 0.3s;
+  padding: 20px;
   overflow: hidden;
+  transform: translateX(-100%); /* Hide off-screen by default */
+  transition: transform 0.3s cubic-bezier(.4,0,.2,1); /* Animate transform for performance */
 }
 .left-menu.expanded {
-  width: 280px;
-  padding: 20px;
-  box-shadow: 2px 0 16px rgba(0,0,0,0.08);
+  transform: translateX(0); /* Bring on-screen when expanded */
 }
 
 .left-menu .menu-header,
@@ -287,6 +302,7 @@ const handleTouchEnd = () => {
 .left-menu .theme-section,
 .left-menu .music-section,
 .left-menu .menu-footer {
+  /* The opacity transition can remain as it is also performant */
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.2s;
@@ -414,8 +430,7 @@ const handleTouchEnd = () => {
   overflow: auto;
   background: var(--color-bg-primary);
   min-height: 100vh;
-  margin-left: 0;
-  transition: margin-left 0.3s;
+  /* The margin-left and its transition are removed to prevent layout reflow */
 }
 
 /* 侧边栏菜单滑动卡片动画 */
