@@ -44,7 +44,7 @@
             <input 
               type="text" 
               v-model="startPoint" 
-              placeholder="点击地图或��上方选点后设置"
+              placeholder="点击地图或在上方选点后设置"
               :disabled="loading"
               class="input"
               readonly
@@ -224,20 +224,32 @@ onMounted(() => {
 
     // Initialize Heatmap
     heatmap = new AMap.HeatMap(map, {
-      radius: 30,
-      opacity: [0, 0.8],
+      radius: 80, // 增加半径以创建更连续的热力图效果
+      opacity: [0.1, 0.9], // 调整透明度范围
       gradient: {
-        0.4: 'blue',
-        0.6: 'cyan',
-        0.7: 'lime',
-        0.8: 'yellow',
-        1.0: 'red'
-      }
+        0.2: 'rgba(0, 0, 255, 0.8)', // 蓝色
+        0.4: 'rgba(0, 255, 255, 0.8)', // 青色
+        0.6: 'rgba(0, 255, 0, 0.8)', // 绿色
+        0.8: 'rgba(255, 255, 0, 0.8)', // 黄色
+        1.0: 'rgba(255, 0, 0, 0.9)' // 红色
+      },
+      blur: 0.85, // 增加模糊效果使热力图更平滑
+      zooms: [3, 20], // 设置缩放级别范围
+      zIndex: 10 // 设置层级，使热力图显示在地图上方但在地名下方
     });
 
     // Map click event
     map.on('click', (e) => {
       const { lng, lat } = e.lnglat
+      
+      // 如果热力图正在显示，点击地图时关闭热力图
+      if (showHeatmap.value) {
+        showHeatmap.value = false;
+        if (heatmap) {
+          heatmap.hide();
+        }
+        return; // 关闭热力图后不执行其他点击逻辑
+      }
       
       // Update current location info
       updateLocationInfo(lng, lat)
@@ -251,9 +263,27 @@ onMounted(() => {
 })
 
 /**
+ * 检查坐标是否在允许范围内
+ */
+const isCoordinateInRange = (lng, lat) => {
+  const minLng = 116.296953
+  const maxLng = 116.369436 // 修正经度范围，设置合理的东边界
+  const minLat = 39.932278
+  const maxLat = 39.977596
+  
+  return lng >= minLng && lng <= maxLng && lat >= minLat && lat <= maxLat
+}
+
+/**
  * 更新当前点击位置的信息
  */
 const updateLocationInfo = (lng, lat) => {
+  // 检查坐标范围
+  if (!isCoordinateInRange(lng, lat)) {
+    showSuccess('选点超出范围错误', '请在指定区域内选择点位')
+    return
+  }
+  
   // First, update the location info in the panel regardless
   locationInfo.value.coords = `${lng.toFixed(6)}, ${lat.toFixed(6)}`
   locationInfo.value.lng = lng
@@ -296,6 +326,9 @@ const updateLocationInfo = (lng, lat) => {
  */
 const toggleHeatmap = async () => {
   if (showHeatmap.value) {
+    // 自动设置地图中心为北京中心，并调整缩放级别到显示四环以内区域
+    map.setCenter([116.380082, 39.939399]);
+    map.setZoom(12.6); // 缩放级别11大约可以显示北京四环以内区域
     await loadHeatmapData();
   } else {
     if (heatmap) {
@@ -305,29 +338,67 @@ const toggleHeatmap = async () => {
 }
 
 /**
- * Load Heatmap Data from API
+ * Load Heatmap Data from Local File
  */
 const loadHeatmapData = async () => {
-  loading.value = true; // Use the existing loading state
+  loading.value = true;
   try {
-    const response = await dataAPI.getHeatmapData();
-    heatmapData.value = response.data;
+    // 等待地图定位和缩放完成
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // 从本地文件读取热力图数据
+    const response = await fetch('/1.txt');
+    const text = await response.text();
+    
+    // 解析CSV格式数据："热度","纬度","经度"
+    const lines = text.trim().split('\n');
+    const parsedData = lines.map(line => {
+      const parts = line.split(',');
+      if (parts.length >= 3) {
+        const intensity = parseFloat(parts[0].replace(/"/g, ''));
+        const lat = parseFloat(parts[1].replace(/"/g, ''));
+        const lng = parseFloat(parts[2].replace(/"/g, ''));
+        return { intensity, lat, lng };
+      }
+      return null;
+    }).filter(item => item !== null);
+    
+    heatmapData.value = parsedData;
+    
+    // 添加边界点以确保全地图覆盖
+    const mapBounds = map.getBounds();
+    const southwest = mapBounds.getSouthWest();
+    const northeast = mapBounds.getNorthEast();
+    
+    const boundaryPoints = [
+      { lng: southwest.lng, lat: southwest.lat, count: 1 }, // 西南角
+      { lng: northeast.lng, lat: northeast.lat, count: 1 }, // 东北角
+      { lng: southwest.lng, lat: northeast.lat, count: 1 }, // 西北角
+      { lng: northeast.lng, lat: southwest.lat, count: 1 }, // 东南角
+      { lng: (southwest.lng + northeast.lng) / 2, lat: (southwest.lat + northeast.lat) / 2, count: 1 } // 中心点
+    ];
+    
+    const allData = [
+      ...heatmapData.value.map(item => ({
+        lng: item.lng,
+        lat: item.lat,
+        count: item.intensity
+      })),
+      ...boundaryPoints
+    ];
     
     if (heatmap && heatmapData.value.length > 0) {
       heatmap.setDataSet({
-        data: heatmapData.value.map(item => ({
-          lng: item.longitude,
-          lat: item.latitude,
-          count: item.flow
-        })),
-        max: Math.max(...heatmapData.value.map(item => item.flow))
+        data: allData,
+        max: Math.max(...heatmapData.value.map(item => item.intensity))
       });
       heatmap.show();
-      showSuccess('加载成功', '热力图数据已更新');
+      showSuccess('加载成功', `热力图数据已更新，共${heatmapData.value.length}个数据点`);
     }
   } catch (err) {
-    handleApiError(err, '加载热力图数据');
-    showHeatmap.value = false; // Turn off toggle if loading fails
+    console.error('加载热力图数据失败:', err);
+    showSuccess('加载失败', '无法读取热力图数据文件');
+    showHeatmap.value = false;
   } finally {
     loading.value = false;
   }
@@ -338,6 +409,11 @@ const loadHeatmapData = async () => {
  */
 const setStartFromInfo = () => {
   if (locationInfo.value.lat && locationInfo.value.lng) {
+    // 检查坐标范围
+    if (!isCoordinateInRange(locationInfo.value.lng, locationInfo.value.lat)) {
+      showSuccess('选点超出范围错误', '起点必须在指定区域内')
+      return
+    }
     setStartPoint(locationInfo.value.lng, locationInfo.value.lat, locationInfo.value.address)
     if (selectionMarker) {
       selectionMarker.hide();
@@ -352,6 +428,11 @@ const setStartFromInfo = () => {
  */
 const setEndFromInfo = () => {
   if (locationInfo.value.lat && locationInfo.value.lng) {
+    // 检查坐标范围
+    if (!isCoordinateInRange(locationInfo.value.lng, locationInfo.value.lat)) {
+      showSuccess('选点超出范围错误', '终点必须在指定区域内')
+      return
+    }
     setEndPoint(locationInfo.value.lng, locationInfo.value.lat, locationInfo.value.address)
     if (selectionMarker) {
       selectionMarker.hide();
@@ -427,7 +508,8 @@ const planRoute = async () => {
       // 注意：time参数已被移除，因为它未在当前后端接口中使用
     })
     
-    routes.value = response.data
+    // 后端直接返回RouteResponse对象，包装成数组格式
+    routes.value = response ? [response] : []
     
     if (routes.value.length > 0) {
       selectRoute(0) // 默认选择第一条路线
@@ -463,22 +545,53 @@ const displayRoute = (route) => {
   clearPolylines()
   
   // 创建路线折线
-  const path = route.points.map(point => [point.longitude, point.latitude])
+  const path = route.points.map(point => [point.lng, point.lat])
   
   const polyline = new AMap.Polyline({
     path: path,
-    borderWeight: 2,
+    borderWeight: 1,
     strokeColor: "#3366FF",
-    strokeOpacity: 0.8,
-    strokeWeight: 6,
-    strokeStyle: "solid"
+    strokeOpacity: 0.6, // 半透明
+    strokeWeight: 3, // 更细的路线
+    strokeStyle: "solid",
+    zIndex: 5 // 位于地图上，地名和图例下方
   })
   
   polyline.setMap(map)
   currentPolylines.push(polyline)
   
+  // 添加动画效果
+  animateRoute(polyline, path)
+  
   // 调整地图视野以包含整条路线
   map.setFitView([polyline])
+}
+
+/**
+ * 路线动画效果
+ */
+const animateRoute = (polyline, fullPath) => {
+  if (fullPath.length < 2) return
+  
+  let currentIndex = 0
+  const animationSpeed = 500 // 动画速度（毫秒）
+  
+  // 初始时只显示起点
+  polyline.setPath([fullPath[0]])
+  
+  const animate = () => {
+    if (currentIndex < fullPath.length - 1) {
+      currentIndex++
+      // 逐步扩展路径
+      const currentPath = fullPath.slice(0, currentIndex + 1)
+      polyline.setPath(currentPath)
+      
+      setTimeout(animate, animationSpeed)
+    }
+  }
+  
+  // 开始动画
+  setTimeout(animate, 200)
 }
 
 /**

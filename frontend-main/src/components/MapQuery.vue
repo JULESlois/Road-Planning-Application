@@ -133,6 +133,16 @@ onMounted(() => {
     // 地图点击显示经纬度
     map.on('click', (e) => {
       const { lng, lat } = e.lnglat
+      
+      // 如果热力图正在显示，点击地图时关闭热力图
+      if (showHeatmap.value) {
+        showHeatmap.value = false;
+        if (heatmap) {
+          heatmap.hide();
+        }
+        return; // 关闭热力图后不执行其他点击逻辑
+      }
+      
       infoWindow.setContent(`<div style='font-size:14px;'>经度: ${lng.toFixed(6)}<br>纬度: ${lat.toFixed(6)}</div>`)
       infoWindow.open(map, [lng, lat])
     })
@@ -147,7 +157,8 @@ onMounted(() => {
         0.7: 'lime',
         0.8: 'yellow',
         1.0: 'red'
-      }
+      },
+      zIndex: 10 // 设置层级，使热力图显示在地图上方但在地名下方
     })
 
     console.log('地图查询页面初始化完成')
@@ -193,25 +204,45 @@ const loadHeatmapData = async () => {
   loadingType.value = '热力图数据'
   
   try {
-    const response = await dataAPI.getHeatmapData()
-    heatmapData.value = response.data
+    // 等待地图定位和缩放完成
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    // 从本地文件读取热力图数据
+    const response = await fetch('/1.txt')
+    const text = await response.text()
+    
+    // 解析CSV格式数据："热度","纬度","经度"
+    const lines = text.trim().split('\n')
+    const parsedData = lines.map(line => {
+      const parts = line.split(',')
+      if (parts.length >= 3) {
+        const intensity = parseFloat(parts[0].replace(/"/g, ''))
+        const lat = parseFloat(parts[1].replace(/"/g, ''))
+        const lng = parseFloat(parts[2].replace(/"/g, ''))
+        return { intensity, lat, lng }
+      }
+      return null
+    }).filter(item => item !== null)
+    
+    heatmapData.value = parsedData
     
     if (heatmap && heatmapData.value.length > 0) {
       heatmap.setDataSet({
         data: heatmapData.value.map(item => ({
-          lng: item.longitude,
-          lat: item.latitude,
-          count: item.flow
+          lng: item.lng,
+          lat: item.lat,
+          count: item.intensity
         })),
-        max: Math.max(...heatmapData.value.map(item => item.flow))
+        max: Math.max(...heatmapData.value.map(item => item.intensity))
       })
       heatmap.show()
       
-      showSuccess('加载成功', '热力图数据已更新')
+      showSuccess('加载成功', `热力图数据已更新，共${heatmapData.value.length}个数据点`)
     }
     
   } catch (err) {
-    handleApiError(err, '加载热力图数据')
+    console.error('加载热力图数据失败:', err)
+    showSuccess('加载失败', '无法读取热力图数据文件')
     showHeatmap.value = false
   } finally {
     loading.value = false

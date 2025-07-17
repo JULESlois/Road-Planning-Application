@@ -28,7 +28,7 @@
       <div class="metric-card">
         <h2>拥堵路段</h2>
         <p class="metric-value">
-          {{ dashboardData?.congestedSections ?? '--' }} 
+          {{ dashboardData?.congestedSections ?? '--' }}
           <span class="metric-unit">条</span>
         </p>
         <p class="metric-desc">需要关注的拥堵路段数量</p>
@@ -78,7 +78,7 @@ let timeTimer = null
  */
 const updateCurrentTime = () => {
   const now = new Date()
-  
+
   // 格式化时间 (HH:MM:SS)
   currentTime.value = now.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
@@ -86,7 +86,7 @@ const updateCurrentTime = () => {
     second: '2-digit',
     hour12: false
   })
-  
+
   // 格式化日期 (YYYY年MM月DD日 星期X)
   currentDate.value = now.toLocaleDateString('zh-CN', {
     year: 'numeric',
@@ -101,7 +101,7 @@ const updateCurrentTime = () => {
  */
 const fetchDashboardData = async () => {
   loading.value = true
-  
+
   try {
     const response = await dataAPI.getDashboardStats()
     dashboardData.value = response.data
@@ -161,14 +161,14 @@ const refreshData = async () => {
 onMounted(() => {
   // 立即更新一次时间
   updateCurrentTime()
-  
+
   // 设置时间更新定时器（每秒更新）
   timeTimer = setInterval(() => {
     updateCurrentTime()
   }, 1000)
-  
+
   fetchDashboardData()
-  
+
   // 设置5分钟自动刷新
   refreshTimer = setInterval(() => {
     fetchDashboardData()
@@ -373,28 +373,28 @@ onUnmounted(() => {
   .home-container {
     padding: 20px;
   }
-  
+
   .metrics-grid {
     grid-template-columns: 1fr;
     gap: 20px;
   }
-  
+
   .metric-card {
     padding: 20px;
   }
-  
+
   .metric-value {
     font-size: 2rem;
   }
-  
+
   .current-time {
     font-size: 2rem;
   }
-  
+
   .current-date {
     font-size: 1rem;
   }
-  
+
   .update-info {
     flex-direction: column;
     text-align: center;

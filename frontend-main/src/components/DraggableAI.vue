@@ -31,9 +31,12 @@
         </div>
       </div>
       <div class="ai-window-controls">
+
         <button @click="toggleMinimize" class="minimize-btn" title="最小化">−</button>
       </div>
     </div>
+    
+
     
     <!-- 对话区域 -->
     <div class="chat-container">
@@ -48,13 +51,17 @@
             {{ message.type === 'user' ? '👤' : '🤖' }}
           </div>
           <div class="message-content">
-            <div class="message-text">{{ message.text }}</div>
+            <div class="message-text">
+              {{ message.text }}
+              <!-- 显示打字机光标 -->
+              <span v-if="message.isTyping" class="typing-cursor">|</span>
+            </div>
             <div class="message-time">{{ formatMessageTime(message.time) }}</div>
           </div>
         </div>
         
-        <!-- AI输入中状态 -->
-        <div v-if="aiLoading" class="message ai-typing">
+        <!-- AI加载状态（仅在初始加载时显示） -->
+        <div v-if="aiLoading && !chatMessages.some(msg => msg.isTyping)" class="message ai-typing">
           <div class="message-avatar">🤖</div>
           <div class="message-content">
             <div class="typing-indicator">
@@ -70,13 +77,13 @@
       <div class="chat-input">
         <input 
           v-model="userInput" 
-          @keyup.enter="sendMessage"
+          @keyup.enter="sendMessageToAI"
           placeholder="输入您的问题..."
           class="message-input"
           :disabled="aiLoading"
         >
         <button 
-          @click="sendMessage" 
+          @click="sendMessageToAI" 
           class="send-btn"
           :disabled="!userInput.trim() || aiLoading"
         >
@@ -104,9 +111,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, nextTick } from 'vue'
-import { aiAPI } from '../services/api.js'
-import { handleApiError } from '../utils/errorHandler.js'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { sendMessage, initAIService, checkAPIConfig } from '@/services/aiService'
+import { showSuccess } from '@/utils/errorHandler'
 
 // 窗口状态
 const isMinimized = ref(true) // Default to minimized (floating ball)
@@ -121,6 +128,8 @@ const userInput = ref('')
 const aiLoading = ref(false)
 const chatContainer = ref(null)
 const unreadCount = ref(0)
+
+
 
 // 拖动相关变量
 let startX = 0
@@ -276,10 +285,44 @@ const addSystemMessage = (text) => {
 }
 
 /**
- * 发送消息
+ * 逐字显示文本的打字机效果
+ * @param {string} text - 要显示的文本
+ * @param {Object} messageObj - 消息对象引用
+ * @param {number} speed - 打字速度（毫秒）
  */
-const sendMessage = async () => {
+const typewriterEffect = async (text, messageObj, speed = 80) => {
+  // 清空初始文本
+  messageObj.text = ''
+  
+  // 逐字添加文本
+  for (let i = 0; i <= text.length; i++) {
+    messageObj.text = text.substring(0, i)
+    
+    // 强制触发响应式更新
+    await nextTick()
+    scrollToBottom()
+    
+    // 如果不是最后一个字符，等待一段时间
+    if (i < text.length) {
+      await new Promise(resolve => setTimeout(resolve, speed))
+    }
+  }
+  
+  // 完成后移除打字状态
+  messageObj.isTyping = false
+}
+
+/**
+ * 发送消息到AI
+ */
+const sendMessageToAI = async () => {
   if (!userInput.value.trim() || aiLoading.value) return
+  
+  // 检查API配置
+  if (!checkAPIConfig()) {
+    showSuccess('API服务未就绪', 'DeepSeek API服务正在初始化，请稍后重试', 'warning')
+    return
+  }
   
   const message = userInput.value.trim()
   userInput.value = ''
@@ -294,19 +337,33 @@ const sendMessage = async () => {
   scrollToBottom()
   aiLoading.value = true
   
+  // 创建AI消息占位符
+  const aiMessage = reactive({
+    type: 'assistant',
+    text: '',
+    time: new Date(),
+    isTyping: true
+  })
+  chatMessages.value.push(aiMessage)
+  scrollToBottom()
+  
   try {
-    const response = await aiAPI.chat({
-      message: message,
-      role: selectedRole.value,
-      context: chatMessages.value.slice(-5) // 只传递最近5条消息作为上下文
-    })
+    // 构建对话历史
+    const history = chatMessages.value
+      .slice(-6) // 只传递最近5条消息作为上下文（排除当前正在输入的消息）
+      .filter(msg => msg.type !== 'system' && !msg.isTyping)
+      .map(msg => ({
+        role: msg.type === 'user' ? 'user' : 'assistant',
+        content: msg.text
+      }))
     
-    // 添加AI回复
-    chatMessages.value.push({
-      type: 'assistant',
-      text: response.data.reply || '抱歉，我现在无法回答这个问题。',
-      time: new Date()
-    })
+    const reply = await sendMessage(message, history, selectedRole.value)
+    
+    // 停止加载状态
+    aiLoading.value = false
+    
+    // 使用打字机效果显示AI回复
+    await typewriterEffect(reply || '抱歉，我现在无法回答这个问题。', aiMessage)
     
     // 如果窗口是最小化状态，增加未读计数
     if (isMinimized.value) {
@@ -314,14 +371,14 @@ const sendMessage = async () => {
     }
     
   } catch (err) {
-    handleApiError(err, 'AI对话')
-    chatMessages.value.push({
-      type: 'assistant',
-      text: '抱歉，服务暂时不可用，请稍后重试。',
-      time: new Date()
-    })
-  } finally {
+    console.error('AI对话失败:', err)
     aiLoading.value = false
+    
+    showSuccess('AI对话失败', err.message || '服务暂时不可用，请稍后重试', 'error')
+    
+    // 使用打字机效果显示错误消息
+    await typewriterEffect(`抱歉，${err.message || '服务暂时不可用，请稍后重试。'}`, aiMessage)
+  } finally {
     scrollToBottom()
   }
 }
@@ -331,8 +388,10 @@ const sendMessage = async () => {
  */
 const askQuickQuestion = (question) => {
   userInput.value = question
-  sendMessage()
+  sendMessageToAI()
 }
+
+
 
 /**
  * 滚动到底部
@@ -366,7 +425,9 @@ const handleResize = () => {
   position.value.y = Math.min(position.value.y, maxY)
 }
 
-onMounted(() => {
+onMounted(async () => {
+  // 初始化AI服务
+  await initAIService()
   // 添加欢迎消息
   addSystemMessage(`欢迎使用AI助手！我是您的${getRoleName(selectedRole.value)}，有什么可以帮助您的吗？`)
 })
@@ -473,6 +534,7 @@ onUnmounted(() => {
   gap: 4px;
 }
 
+.settings-btn,
 .minimize-btn {
   width: 24px;
   height: 24px;
@@ -605,6 +667,23 @@ onUnmounted(() => {
   }
 }
 
+/* 打字机光标样式 */
+.typing-cursor {
+  color: var(--color-primary);
+  font-weight: bold;
+  animation: blink 1s infinite;
+  margin-left: 2px;
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
 /* 输入区域 */
 .chat-input {
   padding: 12px 16px;
@@ -696,4 +775,4 @@ onUnmounted(() => {
     height: 450px;
   }
 }
-</style> 
+</style>

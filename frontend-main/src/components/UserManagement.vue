@@ -148,9 +148,16 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import { useAuthStore } from '../stores/auth.js'
+import { useThemeStore } from '../stores/theme.js' // Import theme store
 import { handleApiError, showSuccess } from '../utils/errorHandler.js'
+import dayBg from '../assets/day.png' // Import day background
+import nightBg from '../assets/night.png' // Import night background
 
 const authStore = useAuthStore()
+const themeStore = useThemeStore() // Initialize theme store
+
+// Computed property for background image
+const bgImage = computed(() => themeStore.isDark ? nightBg : dayBg)
 
 // 响应式数据
 const isEditingAuth = ref(false)
@@ -330,9 +337,12 @@ onMounted(() => {
   display: flex;
   justify-content: center;
   align-items: flex-start;
-  background: var(--color-bg-primary);
   padding: 20px;
   overflow-y: auto;
+  background-image: v-bind('`url(${bgImage})`');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
 }
 
 .user-card {
